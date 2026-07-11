@@ -36,6 +36,37 @@
 
 ## 本版主要改动
 
+### 支持的邮箱服务商
+
+本项目支持多种邮箱服务商，可在 `config.json` 中通过 `email_provider` 配置：
+
+| 邮箱类型 | 配置值 | 凭证格式 | 说明 |
+|----------|--------|----------|------|
+| Hotmail/Outlook | `hotmail` / `outlookmail` | `邮箱----密码----ClientID----Token` | 四段凭证格式 |
+| Cloudflare | `cloudflare` | API 配置 | Cloudflare Email Routing API |
+| CloudMail | `cloudmail` | URL + 账号密码 | 自托管 CloudMail |
+| DuckMail | `duckmail` | API Key | 临时邮箱服务 |
+| YYDS | `yyds` | API Key | 临时邮箱服务 |
+
+**Cloudflare 配置示例：**
+
+```json
+{
+  "email_provider": "cloudflare",
+  "cloudflare_api_base": "https://your-api-domain.com",
+  "cloudflare_admin_password": "your-admin-password",
+  "cloudflare_path_accounts": "/admin/new_address",
+  "defaultDomains": "your-domain.com"
+}
+```
+
+| 配置项 | 说明 |
+|--------|------|
+| `cloudflare_api_base` | API 基础地址 |
+| `cloudflare_admin_password` | 管理员密码（用于 `x-admin-auth` 认证） |
+| `cloudflare_path_accounts` | 创建邮箱的端点（默认 `/admin/new_address`） |
+| `defaultDomains` | 邮箱域名 |
+
 ### 1. Hotmail / Outlook：`邮箱----密码----ClientID----Token`
 
 设置：
