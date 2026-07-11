@@ -419,10 +419,22 @@ def _pick_list_payload(data):
 
 
 def cloudflare_create_temp_address(api_base):
-    """适配 cloudflare_temp_email v1.8.x: POST /api/new_address -> {address,jwt}"""
+    """适配 cloudflare_temp_email: POST /admin/new_address -> {address,jwt}"""
     global _cf_domain_index
-    url = f"{api_base}/api/new_address"
-    payload = {}
+    import random
+    import string
+    # 使用配置中的 path_accounts 或默认 /admin/new_address
+    path = config.get("cloudflare_path_accounts", "/admin/new_address")
+    url = f"{api_base}{path}"
+    admin_password = config.get("cloudflare_admin_password", "")
+
+    # 生成随机用户名
+    def random_name():
+        return "".join(random.choices(string.ascii_lowercase, k=5)) + \
+               "".join(random.choices(string.digits, k=random.randint(1, 3))) + \
+               "".join(random.choices(string.ascii_lowercase, k=random.randint(1, 3)))
+
+    payload = {"enablePrefix": True, "name": random_name()}
     try:
         # 在多个域名之间轮换，降低单域偶发不收件导致的失败率
         domains = [x.strip() for x in re.split(r"[,，\s]+", str(config.get("defaultDomains", "") or "")) if x.strip()]
@@ -431,16 +443,20 @@ def cloudflare_create_temp_address(api_base):
             _cf_domain_index += 1
     except Exception:
         pass
-    resp = http_post(url, json=payload, headers={"Content-Type": "application/json"})
+    # 使用 x-admin-auth 认证
+    headers = {"Content-Type": "application/json"}
+    if admin_password:
+        headers["x-admin-auth"] = admin_password
+    resp = http_post(url, json=payload, headers=headers)
     resp.raise_for_status()
     try:
         data = resp.json()
     except Exception:
-        raise Exception(f"Cloudflare /api/new_address 返回非JSON: {resp.text[:300]}")
+        raise Exception(f"Cloudflare {path} 返回非JSON: {resp.text[:300]}")
     address = data.get("address")
     jwt = data.get("jwt")
     if not address or not jwt:
-        raise Exception(f"Cloudflare /api/new_address 缺少 address/jwt: {data}")
+        raise Exception(f"Cloudflare {path} 缺少 address/jwt: {data}")
     return address, jwt
 
 
@@ -760,14 +776,13 @@ def get_message_detail(token, message_id):
 
 
 def cloudflare_get_domains(api_base, api_key=None):
-    headers = cloudflare_build_headers(content_type=False)
-    if api_key and "Authorization" in headers:
-        headers["Authorization"] = f"Bearer {api_key}"
-    if api_key and "X-API-Key" in headers:
-        headers["X-API-Key"] = api_key
-    path = get_cloudflare_path("cloudflare_path_domains", "/domains")
-    params = cloudflare_apply_auth_params()
-    resp = http_get(f"{api_base}{path}", headers=headers, params=params)
+    # 使用 x-admin-auth 认证
+    admin_password = config.get("cloudflare_admin_password", "")
+    headers = {"Content-Type": "application/json"}
+    if admin_password:
+        headers["x-admin-auth"] = admin_password
+    path = get_cloudflare_path("cloudflare_path_domains", "/api/domains")
+    resp = http_get(f"{api_base}{path}", headers=headers)
     resp.raise_for_status()
     return _pick_list_payload(resp.json())
 
