@@ -29,6 +29,9 @@ uv run python -u register_cli.py --extra 1 --threads 1
 # 注册 5 个账号，并发 2
 uv run python -u register_cli.py --extra 5 --threads 2
 
+# 无头注册（默认仍建议有头，Turnstile 失败时去掉该参数）
+uv run python -u register_cli.py --extra 1 --threads 1 --headless-register
+
 # GUI 模式
 uv run python grok_register_ttk.py
 # 或 mise run gui / mise run register

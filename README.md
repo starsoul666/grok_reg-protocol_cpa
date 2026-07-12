@@ -225,6 +225,7 @@ cp config.example.json config.json
 | 字段 | 作用 |
 |------|------|
 | `proxy` | **注册** Chromium + 邮箱等 HTTP |
+| `register_headless` | 注册 Chromium 是否无头；默认 `false`，Turnstile 不稳定时保持有头 |
 | `cpa_proxy` | **OIDC mint**（协议 HTTP + 回退浏览器 + probe） |
 
 ```
@@ -281,6 +282,12 @@ uv run python -u register_cli.py --extra 1 --threads 1
 
 # 再注册 5 个
 uv run python -u register_cli.py --extra 5 --threads 2
+
+# 无头注册 1 个账号（默认仍是有头；Turnstile 失败时改回有头）
+uv run python -u register_cli.py --extra 1 --threads 1 --headless-register
+
+# 强制有头覆盖 config.register_headless
+uv run python -u register_cli.py --extra 1 --threads 1 --headed-register
 
 # GUI
 uv run python grok_register_ttk.py
