@@ -200,6 +200,34 @@ def take_screenshot(page, tag: str = ""):
         print(f"  [screenshot] err: {e}")
 
 
+def save_turnstile_debug(page, tag: str = "turnstile_failed"):
+    """Best-effort debug bundle for Turnstile failures."""
+    if PERF_FLAGS.get("skip_debug_io"):
+        return
+    try:
+        os.makedirs(_SCREENSHOT_DIR, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = os.path.join(_SCREENSHOT_DIR, f"{ts}_{tag}")
+        try:
+            page.get_screenshot(path=f"{base}.png")
+            print(f"  [turnstile-debug] screenshot: {base}.png")
+        except Exception as exc:
+            print(f"  [turnstile-debug] screenshot err: {exc}")
+        try:
+            info = page.run_js("""() => ({
+                url: location.href,
+                title: document.title,
+                text: (document.body && document.body.innerText || '').slice(0, 2000)
+            })""")
+            with open(f"{base}.txt", "w", encoding="utf-8") as f:
+                json.dump(info or {}, f, ensure_ascii=False, indent=2)
+            print(f"  [turnstile-debug] state: {base}.txt")
+        except Exception as exc:
+            print(f"  [turnstile-debug] state err: {exc}")
+    except Exception as exc:
+        print(f"  [turnstile-debug] err: {exc}")
+
+
 # ── 超时守卫 ──
 
 REGISTER_TIMEOUT = 180  # 单次注册总超时（秒）
@@ -2793,6 +2821,7 @@ if (nodes.length && typeof nodes[0].click === 'function') nodes[0].click();
             pass
         human_sleep(1, cancel_callback)
 
+    save_turnstile_debug(page)
     raise Exception("Turnstile 获取 token 失败")
 
 
