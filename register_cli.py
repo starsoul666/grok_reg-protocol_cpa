@@ -510,10 +510,27 @@ def main() -> int:
     parser.add_argument("--browser-recycle-every", type=int, default=25, help="复用 N 次后完整回收")
     parser.add_argument("--cookie-snapshot", action="store_true", help="注册成功写 cookie 快照（默认关，fast）")
     parser.add_argument("--inline-mint", action="store_true", help="强制注册线程内联 mint（调试用）")
+    parser.add_argument(
+        "--headless-register",
+        action="store_true",
+        help="注册浏览器使用无头模式（默认由 config.register_headless 决定）",
+    )
+    parser.add_argument(
+        "--headed-register",
+        action="store_true",
+        help="注册浏览器强制有头模式，覆盖 config.register_headless",
+    )
     args = parser.parse_args()
 
     reg.load_config()
     cfg0 = getattr(reg, "config", {}) or {}
+    if args.headless_register and args.headed_register:
+        print("[!] --headless-register 与 --headed-register 不能同时使用", flush=True)
+        return 2
+    if args.headless_register:
+        cfg0["register_headless"] = True
+    elif args.headed_register:
+        cfg0["register_headless"] = False
     threads = max(1, min(args.threads, 10))
     fast = bool(args.fast) and not bool(args.no_fast)
 
@@ -552,21 +569,25 @@ def main() -> int:
         remaining = args.extra
         print(
             f"[*] 配置加载完成，额外新注册 {args.extra} 个（当前已有 {done_count} → 目标 {target_total}），"
-            f"注册线程={threads} mint_workers={mint_workers} mint_queue_max={mint_qmax} fast={fast}",
+            f"注册线程={threads} mint_workers={mint_workers} mint_queue_max={mint_qmax} "
+            f"fast={fast} register_headless={bool(cfg0.get('register_headless', False))}",
             flush=True,
         )
         args.count = target_total
     elif args.count == 0:
         remaining = None
         print(
-            f"[*] 配置加载完成，不限数量，注册线程={threads} mint_workers={mint_workers} mint_queue_max={mint_qmax} fast={fast}",
+            f"[*] 配置加载完成，不限数量，注册线程={threads} mint_workers={mint_workers} "
+            f"mint_queue_max={mint_qmax} fast={fast} "
+            f"register_headless={bool(cfg0.get('register_headless', False))}",
             flush=True,
         )
     else:
         remaining = max(0, args.count - done_count)
         print(
             f"[*] 配置加载完成，目标 {args.count} 个账号，注册线程={threads} "
-            f"mint_workers={mint_workers} mint_queue_max={mint_qmax} fast={fast}",
+            f"mint_workers={mint_workers} mint_queue_max={mint_qmax} "
+            f"fast={fast} register_headless={bool(cfg0.get('register_headless', False))}",
             flush=True,
         )
     print(f"[*] accounts_file = {args.accounts_file}", flush=True)
