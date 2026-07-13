@@ -65,7 +65,8 @@ grok_reg-protocol_cpa/
 ├── grok_register_ttk.py      # 浏览器注册核心（含 Hotmail/Outlook 邮箱）
 ├── cpa_export.py             # 注册成功后的 CPA 导出 hook
 ├── cpa_xai/                  # OIDC/CPA 铸造模块
-│   ├── protocol_mint.py      # 纯 HTTP Device Flow（协议优先）
+│   ├── pkce_mint.py          # 纯 HTTP PKCE authorization-code（协议优先）
+│   ├── protocol_mint.py      # 旧 Device Flow 兼容路径（默认不回退）
 │   ├── mint.py               # 协议 → 浏览器回退编排
 │   ├── browser_confirm.py    # 浏览器 consent 回退
 │   ├── oauth_device.py       # OAuth Device Flow 核心逻辑
@@ -81,14 +82,14 @@ grok_reg-protocol_cpa/
 ```
 注册成功拿到 sso cookie
         ↓
-【优先】protocol_mint：curl_cffi + sso cookie
-   device/code → verify → approve → token 轮询
+【优先】pkce_mint：curl_cffi + sso cookie
+   authorize → cookie-setter → consent → authorization_code → token
         ↓ 成功
-  cpa_auths/xai-<email>.json   (mint_method=protocol)
+  cpa_auths/xai-<email>.json   (mint_method=pkce)
         ↓ 失败
-【回退】browser_confirm：有头 Chromium + turnstilePatch
+默认失败并记录；如显式开启 cpa_allow_device_flow_fallback，才回退旧 Device Flow / browser_confirm
         ↓
-  cpa_auths/xai-<email>.json   (mint_method=browser)
+  避免产出 /models 可见但 chat endpoint 403 的坏 token
 ```
 
 ## 关键配置
@@ -101,6 +102,7 @@ grok_reg-protocol_cpa/
 | `hotmail_accounts_file` | Hotmail 凭证文件路径 |
 | `cpa_export_enabled` | 是否启用 CPA 导出（默认 `true`） |
 | `cpa_prefer_protocol` | 是否优先协议 mint（默认 `true`） |
+| `cpa_protocol_flow` | 协议 mint 流程：`pkce`（默认推荐）或 `device`（旧 Device Flow） |
 | `cpa_auth_dir` | CPA 认证文件输出目录（默认 `./cpa_auths`） |
 | `cpa_base_url` | 免费 Grok 4.5 上游 API（必须为 `https://cli-chat-proxy.grok.com/v1`） |
 | `proxy` / `cpa_proxy` | 注册和 mint 的代理配置 |

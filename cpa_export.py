@@ -112,17 +112,19 @@ def export_cpa_xai_for_account(
     # Default headed: headless is frequently Cloudflare-blocked on accounts.x.ai
     headless = bool(cfg.get("cpa_headless", False))
     probe = bool(cfg.get("cpa_probe_after_write", True))
-    probe_chat = bool(cfg.get("cpa_probe_chat", False))
+    probe_chat = bool(cfg.get("cpa_probe_chat", True))
     timeout = float(cfg.get("cpa_mint_timeout_sec", 240))
     base_url = cfg.get("cpa_base_url") or "https://cli-chat-proxy.grok.com/v1"
     force_standalone = bool(cfg.get("cpa_force_standalone", True))
     cookie_inject = bool(cfg.get("cpa_mint_cookie_inject", True))
     reuse_browser = bool(cfg.get("cpa_mint_browser_reuse", True))
     recycle_every = int(cfg.get("cpa_mint_browser_recycle_every", 15) or 0)
-    # Protocol (pure HTTP SSO device flow) first; browser only on failure.
+    # Protocol (pure HTTP SSO PKCE flow) first; browser only on failure.
     prefer_protocol = bool(cfg.get("cpa_prefer_protocol", True))
     protocol_only = bool(cfg.get("cpa_protocol_only", False))
     protocol_poll_timeout = float(cfg.get("cpa_protocol_poll_timeout_sec", 90) or 90)
+    allow_device_flow_fallback = bool(cfg.get("cpa_allow_device_flow_fallback", False))
+    protocol_flow = str(cfg.get("cpa_protocol_flow") or "pkce").strip().lower()
 
     # cookies: explicit arg > page export > none
     use_cookies = cookies
@@ -163,7 +165,7 @@ def export_cpa_xai_for_account(
     log(
         f"[cpa] mint OIDC for {email} -> {out_dir} proxy={proxy or '(none)'} "
         f"cookies={len(use_cookies) if isinstance(use_cookies, list) else (1 if use_cookies else 0)} "
-        f"reuse={reuse_browser} protocol={prefer_protocol}"
+        f"reuse={reuse_browser} protocol={prefer_protocol} flow={protocol_flow}"
         f"{' only' if protocol_only else ''} sso={'yes' if sso_val else 'no'}"
     )
 
@@ -189,6 +191,8 @@ def export_cpa_xai_for_account(
         prefer_protocol=prefer_protocol,
         protocol_only=protocol_only,
         protocol_poll_timeout_sec=protocol_poll_timeout,
+        allow_device_flow_fallback=allow_device_flow_fallback,
+        protocol_flow=protocol_flow,
         log=_log,
     )
     if result.get("mint_method"):

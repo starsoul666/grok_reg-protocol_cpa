@@ -5,6 +5,7 @@ Produce CLIProxyAPI-compatible ``xai-<email>.json`` credentials.
 
 from .accounts import AccountLine, existing_cpa_emails, parse_accounts_file
 from .mint import mint_and_export
+from .pkce_mint import PKCEMintError, mint_with_sso_pkce
 from .probe import probe_mini_response, probe_models
 from .protocol_mint import (
     ProtocolMintError,
@@ -44,6 +45,8 @@ __all__ = [
     "expired_from_access_token",
     "extract_sso_from_cookies",
     "mint_and_export",
+    "mint_with_sso_pkce",
+    "PKCEMintError",
     "mint_with_sso_protocol",
     "parse_accounts_file",
     "probe_mini_response",

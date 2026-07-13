@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .browser_confirm import mint_with_browser
+from .pkce_mint import PKCEMintError, mint_with_sso_pkce
 from .probe import probe_mini_response, probe_models
 from .protocol_mint import ProtocolMintError, extract_sso_from_cookies, mint_with_sso_protocol
 from .proxyutil import proxy_log_label, resolve_proxy, set_runtime_proxy
@@ -39,6 +40,8 @@ def mint_and_export(
     prefer_protocol: bool = True,
     protocol_only: bool = False,
     protocol_poll_timeout_sec: float = 90.0,
+    allow_device_flow_fallback: bool = False,
+    protocol_flow: str = "pkce",
     log: LogFn | None = None,
     cancel: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
@@ -52,6 +55,13 @@ def mint_and_export(
     """
     log = log or _noop
     email = (email or "").strip()
+    protocol_flow = (protocol_flow or "pkce").strip().lower()
+    if protocol_flow not in {"pkce", "device"}:
+        return {
+            "ok": False,
+            "email": email,
+            "error": f"unsupported cpa_protocol_flow: {protocol_flow}; expected pkce or device",
+        }
     if not email or not password:
         # Protocol can work with sso alone; password only required for browser fallback
         if not email:
@@ -70,39 +80,73 @@ def mint_and_export(
     protocol_err: str | None = None
 
     if prefer_protocol and sso_val:
-        log("mint try protocol (SSO HTTP device flow)")
-        try:
-            tokens = mint_with_sso_protocol(
-                sso_cookie=sso_val,
-                email=email,
-                proxy=resolved or None,
-                poll_timeout_sec=protocol_poll_timeout_sec,
-                log=log,
-                cancel=cancel,
-            )
-            log("mint protocol SUCCESS")
-        except ProtocolMintError as e:
-            protocol_err = str(e)
-            log(f"mint protocol failed: {e}")
-            if protocol_only:
+        if protocol_flow == "pkce":
+            log("mint try protocol (SSO HTTP PKCE authorization-code flow)")
+            try:
+                tokens = mint_with_sso_pkce(
+                    sso_cookie=sso_val,
+                    email=email,
+                    proxy=resolved or None,
+                    log=log,
+                    cancel=cancel,
+                )
+                log("mint protocol PKCE SUCCESS")
+            except PKCEMintError as e:
+                protocol_err = str(e)
+                log(f"mint protocol PKCE failed: {e}")
+                if allow_device_flow_fallback:
+                    log("mint fallback → device flow")
+            except Exception as e:  # noqa: BLE001
+                protocol_err = str(e)
+                log(f"mint protocol PKCE exception: {e}")
+                if allow_device_flow_fallback:
+                    log("mint fallback → device flow")
+
+            if tokens is None and not allow_device_flow_fallback:
                 return {
                     "ok": False,
                     "email": email,
-                    "error": f"protocol_only: {e}",
-                    "mint_method": "protocol",
+                    "error": f"pkce protocol failed: {protocol_err}",
+                    "mint_method": "pkce",
                 }
-            log("mint fallback → browser")
-        except Exception as e:  # noqa: BLE001
-            protocol_err = str(e)
-            log(f"mint protocol exception: {e}")
-            if protocol_only:
-                return {
-                    "ok": False,
-                    "email": email,
-                    "error": f"protocol_only: {e}",
-                    "mint_method": "protocol",
-                }
-            log("mint fallback → browser")
+        else:
+            log("mint try protocol (SSO HTTP device flow)")
+
+        if tokens is None:
+            try:
+                tokens = mint_with_sso_protocol(
+                    sso_cookie=sso_val,
+                    email=email,
+                    proxy=resolved or None,
+                    poll_timeout_sec=protocol_poll_timeout_sec,
+                    log=log,
+                    cancel=cancel,
+                )
+                log("mint protocol device-flow SUCCESS")
+            except ProtocolMintError as e:
+                device_err = str(e)
+                log(f"mint protocol device-flow failed: {e}")
+                protocol_err = f"pkce: {protocol_err}; device: {device_err}" if protocol_err else device_err
+                if protocol_only:
+                    return {
+                        "ok": False,
+                        "email": email,
+                        "error": f"protocol_only: {protocol_err}",
+                        "mint_method": "protocol",
+                    }
+                log("mint fallback → browser")
+            except Exception as e:  # noqa: BLE001
+                device_err = str(e)
+                log(f"mint protocol device-flow exception: {e}")
+                protocol_err = f"pkce: {protocol_err}; device: {device_err}" if protocol_err else device_err
+                if protocol_only:
+                    return {
+                        "ok": False,
+                        "email": email,
+                        "error": f"protocol_only: {protocol_err}",
+                        "mint_method": "protocol",
+                    }
+                log("mint fallback → browser")
     elif prefer_protocol and not sso_val:
         log("mint protocol skipped (no sso cookie) → browser")
         if protocol_only:

@@ -6,8 +6,8 @@
 
 1. **Hotmail / Outlook 邮箱凭证池**  
    支持 `邮箱----密码----ClientID----Token` 四段格式读取与 XOAUTH2 IMAP 收验证码。
-2. **协议优先的  导出**  
-   注册拿到 SSO 后，优先用 **纯 HTTP Device Flow**（`curl_cffi` + `sso` cookie）铸造 CPA 用的 `xai-*.json`；协议失败再回退原浏览器 consent 逻辑。
+2. **协议优先的 CPA 导出**
+   注册拿到 SSO 后，优先用 **纯 HTTP PKCE authorization-code flow**（`curl_cffi` + `sso` cookie）铸造 CPA 用的 `xai-*.json`；旧 Device Flow 默认不再回退，避免产出 `/models` 可用但 chat 403 的坏 token。
 
 一条成功链路会产出两类凭证：
 
@@ -18,15 +18,16 @@
 
 > **硬约束：SSO ≠ OIDC。**  
 > 免费 Grok 4.5 **不能**用账本里的 sso JWT 直接打 API；必须再走  
-> `accounts.x.ai` device-auth 铸 OIDC，写成 CPA 的 `type=xai` 认证文件。  
+> `accounts.x.ai` OAuth 铸 OIDC，写成 CPA 的 `type=xai` 认证文件。
 > 本仓库的协议路径正是用 **SSO cookie 自动完成** 这一步（无需再弹浏览器时优先走协议）。
 
 本仓库**自包含** OIDC/CPA 铸造代码（`cpa_xai/`）：
 
 | 路径 | 说明 |
 |------|------|
-| `cpa_xai/protocol_mint.py` | **新增**：SSO → 纯 HTTP Device Flow（verify / approve / token） |
-| `cpa_xai/mint.py` | 协议优先，失败回退 `mint_with_browser` |
+| `cpa_xai/pkce_mint.py` | SSO → 纯 HTTP PKCE authorization-code（推荐 CPA 路径） |
+| `cpa_xai/protocol_mint.py` | 旧 SSO → OAuth Device Flow（兼容路径，默认不回退） |
+| `cpa_xai/mint.py` | PKCE 优先的导出编排 |
 | `cpa_xai/browser_confirm.py` | 原逻辑：有头 Chromium 完成 consent |
 | `cpa_export.py` | 注册成功 hook |
 | `scripts/backfill_cpa_xai_from_accounts.py` | 存量账号批量补 CPA |
@@ -113,20 +114,17 @@ your@hotmail.com----mailPassword----xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx----0.AX
 
 相关配置见 `config.example.json` 中 `hotmail_*` 注释键。
 
-### 2. 协议 OIDC → CPA（失败回退浏览器）
+### 2. 协议 OIDC → CPA（PKCE 优先）
 
 ```
 注册成功拿到 sso cookie
         ↓
-【优先】protocol_mint：curl_cffi + sso
-   device/code → verify → approve → token 轮询
+【优先】pkce_mint：curl_cffi + sso
+   authorize → cookie-setter → consent → authorization_code → token
         ↓ 成功
-  cpa_auths/xai-<email>.json   mint_method=protocol
+  cpa_auths/xai-<email>.json   mint_method=pkce
         ↓ 失败
-【回退】browser_confirm：有头 Chromium + turnstilePatch
-   同一套 device-auth，页面点「允许」
-        ↓
-  cpa_auths/xai-<email>.json   mint_method=browser
+  默认失败并记录；如显式开启 cpa_allow_device_flow_fallback，才回退旧 Device Flow / 浏览器路径
 ```
 
 实测协议路径约数秒级即可完成（含 probe）；浏览器路径约 40–60s/号。
@@ -136,7 +134,9 @@ your@hotmail.com----mailPassword----xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx----0.AX
 | 字段 | 默认 | 含义 |
 |------|------|------|
 | `cpa_prefer_protocol` | `true` | 有 SSO 时先走纯 HTTP 协议 mint |
+| `cpa_protocol_flow` | `pkce` | 协议 mint 流程：`pkce`=推荐默认；`device`=旧 Device Flow |
 | `cpa_protocol_only` | `false` | `true`=协议失败也不回退浏览器（调试用） |
+| `cpa_allow_device_flow_fallback` | `false` | PKCE 失败后是否允许旧 Device Flow fallback；可能产生 chat 403 token |
 | `cpa_protocol_poll_timeout_sec` | `90` | 协议路径 token 轮询超时 |
 | `cpa_export_enabled` | `true` | 注册成功后是否 mint OIDC |
 | `cpa_auth_dir` | `./cpa_auths` | 主导出目录 |
@@ -148,10 +148,10 @@ your@hotmail.com----mailPassword----xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx----0.AX
 日志里可看到：
 
 ```text
-[cpa] mint try protocol (SSO HTTP device flow)
-[cpa] protocol token ok ...
-[cpa] mint protocol SUCCESS
-[cpa] mint_method=protocol
+[cpa] mint try protocol (SSO HTTP PKCE authorization-code flow)
+[cpa] pkce authorization code ok ...
+[cpa] mint protocol PKCE SUCCESS
+[cpa] mint_method=pkce
 ```
 
 协议失败时类似：
@@ -371,15 +371,15 @@ curl -sS http://127.0.0.1:8317/v1/chat/completions \
 
 | 现象 | 原因 / 处理 |
 |------|-------------|
-| 协议 `sso invalid` | SSO 过期或无效；会回退浏览器；检查账本第三段 |
-| 协议 verify/approve 失败 | 会话态变化 / 风控；看日志后自动回退浏览器 |
-| 一直 `authorization_pending` | 浏览器路径未完成 consent；需到「设备已授权」且 token 200 |
+| 协议 `sso invalid` | SSO 过期或无效；检查账本第三段 |
+| PKCE cookie-setter / consent 失败 | 会话态变化 / 风控；默认不写 CPA，检查日志后重试 |
+| Device Flow token chat 403 | 旧 Device Flow 常见现象：`/models` 可列出但 chat endpoint permission-denied；保持 `cpa_allow_device_flow_fallback=false` |
 | Cloudflare / Turnstile | 回退浏览器时关 headless、开 turnstilePatch、检查代理 |
 | Hotmail 收不到码 | 检查四段凭证、ClientID/Token、IMAP 主机与 alias 计数 |
-| 有 token 但无 grok-4.5 | `cpa_base_url` 是否为 `cli-chat-proxy` |
+| 有 token 但 chat 403 | 不要只看 `/v1/models`；保持 `cpa_probe_chat=true` 并使用 PKCE mint |
 | 注册成功但无 `cpa_auths` | `cpa_export_enabled`？看 `cpa_auth_failed.txt` |
 
-调试原则：以 **token 端点返回 `access_token` + refresh_token** 为准；probe 看 `/v1/models` 是否含 `grok-4.5`。
+调试原则：以 **最小 `/v1/responses` chat 探测成功** 为准；`/v1/models` 只能证明模型列表可见，不能证明 chat 权限可用。
 
 ---
 
@@ -391,7 +391,8 @@ grok_reg-protocol_cpa/
   grok_register_ttk.py         # 浏览器注册核心 + Hotmail 等
   cpa_export.py                # 成功 hook
   cpa_xai/
-    protocol_mint.py           # SSO 纯 HTTP Device Flow（协议优先）
+    pkce_mint.py               # SSO 纯 HTTP PKCE authorization-code（协议优先）
+    protocol_mint.py           # 旧 Device Flow 兼容路径（默认不回退）
     mint.py                    # 协议 → 浏览器回退编排
     browser_confirm.py         # 原浏览器 consent
     oauth_device.py / schema.py / writer.py / probe.py ...
