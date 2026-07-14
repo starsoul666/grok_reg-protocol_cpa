@@ -48,6 +48,7 @@
 | CloudMail | `cloudmail` | URL + 账号密码 | 自托管 CloudMail |
 | DuckMail | `duckmail` | API Key | 临时邮箱服务 |
 | YYDS | `yyds` | API Key | 临时邮箱服务 |
+| MailNest | `mailnest` | API Key + 项目代码 | Outlook 临时邮箱 |
 
 **Cloudflare 配置示例：**
 
@@ -67,6 +68,19 @@
 | `cloudflare_admin_password` | 管理员密码（用于 `x-admin-auth` 认证） |
 | `cloudflare_path_accounts` | 创建邮箱的端点（默认 `/admin/new_address`） |
 | `defaultDomains` | 邮箱域名 |
+
+**MailNest-迈巢 配置示例**
+
+```json
+{
+      "email_provider": "mailnest",
+      "mailnest_api_key": "",
+      "mailnest_project_code": "x-ai001"
+}
+```
+
+- `api-key`获取页面：https://mailnest.top/account
+- 项目代码`mailnest_project_code`获取页面：https://mailnest.top/buy-email。默认为`x-ai001`，可以直接使用
 
 ### 1. Hotmail / Outlook：`邮箱----密码----ClientID----Token`
 

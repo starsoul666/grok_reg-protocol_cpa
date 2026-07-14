@@ -53,6 +53,10 @@
   "yyds_api_key": "",
   "yyds_jwt": "",
 
+  "// mailnest": "MailNest Outlook 临时邮箱 apikey 获取页面 https://mailnest.top/account",
+  "mailnest_api_key": "",
+  "mailnest_project_code": "x-ai001",
+
   "// ===== 网络 / 浏览器 =====": "",
   "// proxy": "注册机主代理：Chromium + 邮箱 HTTP。可带账号 http://user:pass@host:port。优先于系统 https_proxy。",
   "proxy": "http://127.0.0.1:7890",
