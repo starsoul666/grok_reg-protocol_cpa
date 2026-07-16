@@ -3,7 +3,7 @@
   "//_paths": "相对路径相对 grok_reg 目录；CPA 相关绝对路径更清晰。",
 
   "// ===== 邮箱：注册验证码来源 =====": "",
-  "// email_provider": "cloudmail | cloudflare | duckmail | yyds | hotmail | outlookmail。推荐自建 cloudmail；若使用微软邮箱则选 hotmail/outlookmail。",
+  "// email_provider": "cloudmail | cloudflare | duckmail | yyds | hotmail | outlookmail | mailnest。推荐自建 cloudmail；若使用微软邮箱则选 hotmail/outlookmail。",
   "email_provider": "cloudmail",
   "// defaultDomains": "注册用邮箱域名，逗号分隔；cloudmail catch-all 域名写这里。",
   "defaultDomains": "example.com",
@@ -58,6 +58,11 @@
   "// yyds_api_key / yyds_jwt": "备用邮箱通道凭证",
   "yyds_api_key": "",
   "yyds_jwt": "",
+
+  "// mailnest_api_key": "MailNest Outlook 临时邮箱 API Key；获取页 https://mailnest.top/account",
+  "mailnest_api_key": "",
+  "// mailnest_project_code": "MailNest 项目代码；获取页 https://mailnest.top/buy-email，默认 x-ai001",
+  "mailnest_project_code": "x-ai001",
 
   "// ===== 网络 / 浏览器 =====": "",
   "// proxy": "注册机主代理：Chromium + 邮箱 HTTP。可带账号 http://user:pass@host:port。优先于系统 https_proxy。",

@@ -54,6 +54,8 @@ DEFAULT_CONFIG = {
     "cloudmail_url": "",
     "cloudmail_admin_email": "",
     "cloudmail_password": "",
+    "mailnest_api_key": "",
+    "mailnest_project_code": "x-ai001",
     "cpa_gui_close_mint_browser": True,
     "hotmail_accounts_file": "mail_credentials.txt",
     "hotmail_alias_mode": "random",
@@ -500,6 +502,106 @@ def cloudflare_create_temp_address(api_base):
     if not address or not jwt:
         raise Exception(f"Cloudflare {path} 缺少 address/jwt: {data}")
     return address, jwt
+
+
+# MailNest-迈巢 Outlook 临时邮箱
+MAILNEST_API_BASE = "https://mailnest.top"
+
+
+def get_mailnest_api_key():
+    mailnest_api_key = str(config.get("mailnest_api_key", "") or "").strip()
+    if not mailnest_api_key:
+        raise Exception(f"请在配置文件中配置 mailnest_api_key | 注册网址：{MAILNEST_API_BASE}")
+    return mailnest_api_key
+
+
+def get_mailnest_project_code():
+    mailnest_project_code = str(config.get("mailnest_project_code", "") or "").strip()
+    if not mailnest_project_code:
+        raise Exception(
+            "请在配置文件中配置 mailnest_project_code | 项目网址：https://mailnest.top/buy-email"
+        )
+    return mailnest_project_code
+
+
+def mailnest_buy_email():
+    resp = http_post(
+        f"{MAILNEST_API_BASE}/api/v1/email/temporary/buy",
+        headers={"Authorization": f"Bearer {get_mailnest_api_key()}"},
+        json={
+            "project_code": get_mailnest_project_code(),
+            "count": 1,
+        },
+        timeout=30,
+        verify=False,
+    )
+    try:
+        resp_json = resp.json()
+    except Exception as exc:
+        raise Exception(f"MailNest 购邮返回非 JSON: HTTP {resp.status_code} {resp.text[:300]}") from exc
+    if str(resp_json.get("code")) != "00000":
+        raise Exception(f"MailNest 购邮失败: {resp.text[:300]}")
+    data = resp_json.get("data") or []
+    if not data or not isinstance(data, list):
+        raise Exception(f"MailNest 购邮无邮箱数据: {resp_json}")
+    email = str((data[0] or {}).get("email") or "").strip()
+    if not email:
+        raise Exception(f"MailNest 购邮缺少 email: {resp_json}")
+    print(f"获取到邮箱 | email={email}")
+    return email
+
+
+def mailnest_receive_email(email):
+    resp = http_post(
+        f"{MAILNEST_API_BASE}/api/v1/email/receive",
+        headers={"Authorization": f"Bearer {get_mailnest_api_key()}"},
+        json={"email": email},
+        timeout=30,
+        verify=False,
+    )
+    try:
+        resp_json = resp.json()
+    except Exception as exc:
+        raise Exception(f"MailNest 收件返回非 JSON: HTTP {resp.status_code} {resp.text[:300]}") from exc
+    if str(resp_json.get("code")) != "00000":
+        raise Exception(f"MailNest 收件失败: {resp.text[:300]}")
+    return resp_json.get("data") or []
+
+
+def mailnest_get_code(
+    email,
+    timeout=90,
+    poll_interval=3,
+    log_callback=None,
+    cancel_callback=None,
+):
+    deadline = time.time() + max(1, int(timeout or 90))
+    attempt = 0
+    while time.time() < deadline:
+        raise_if_cancelled(cancel_callback)
+        attempt += 1
+        msg = f"第 {attempt} 次收件 (MailNest)"
+        if log_callback:
+            log_callback(msg)
+        else:
+            print(msg)
+        try:
+            mails = mailnest_receive_email(email)
+        except Exception as exc:
+            if log_callback:
+                log_callback(f"[Debug] MailNest 收件失败: {exc}")
+            mails = []
+        if mails:
+            preview = str((mails[0] or {}).get("body_preview") or "")
+            subject = str((mails[0] or {}).get("subject") or "")
+            code = extract_verification_code(preview, subject=subject)
+            if code:
+                return code
+            # 有邮件但未解析到验证码时继续轮询，避免偶发空预览直接失败
+            if log_callback:
+                log_callback("[Debug] MailNest 有邮件但未解析到验证码，继续等待")
+        sleep_with_cancel(poll_interval, cancel_callback)
+    raise Exception(f"MailNest 在 {timeout}s 内未收到验证码: {email}")
 
 
 def get_user_agent():
@@ -1953,6 +2055,8 @@ def get_email_and_token(api_key=None):
         if not api_base:
             raise Exception("Cloudflare API Base 未配置")
         return cloudflare_create_temp_address(api_base)
+    if provider == "mailnest":
+        return mailnest_buy_email(), "_"
     key = api_key or get_duckmail_api_key()
     domain = pick_domain(api_key=key)
     username = generate_username(10)
@@ -2014,6 +2118,14 @@ def get_oai_code(
             log_callback=log_callback,
             cancel_callback=cancel_callback,
             resend_callback=resend_callback,
+        )
+    if provider == "mailnest":
+        return mailnest_get_code(
+            email,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            log_callback=log_callback,
+            cancel_callback=cancel_callback,
         )
     return duckmail_get_oai_code(
         dev_token,
@@ -3623,7 +3735,7 @@ class GrokRegisterGUI:
         config_frame.pack(fill=tk.X, pady=5)
         ttk.Label(config_frame, text="邮箱服务商:").grid(row=0, column=0, sticky=tk.W)
         self.email_provider_var = tk.StringVar(value=config.get("email_provider", "duckmail"))
-        self.email_provider_combo = ttk.Combobox(config_frame, textvariable=self.email_provider_var, values=["duckmail", "yyds", "cloudflare", "cloudmail", "hotmail", "outlookmail"], width=12, state="readonly")
+        self.email_provider_combo = ttk.Combobox(config_frame, textvariable=self.email_provider_var, values=["duckmail", "yyds", "cloudflare", "cloudmail", "hotmail", "outlookmail", "mailnest"], width=12, state="readonly")
         self.email_provider_combo.grid(row=0, column=1, sticky=tk.W, padx=5)
         ttk.Label(config_frame, text="注册数量:").grid(row=0, column=2, sticky=tk.W, padx=10)
         self.count_var = tk.StringVar(value=str(config.get("register_count", 1)))
@@ -3804,6 +3916,7 @@ class GrokRegisterGUI:
 - cloudflare: 需要 Cloudflare API Base（cloudflare_temp_email 临时邮箱）
 - cloudmail: 需要 CloudMail URL + 密码 + defaultDomains（maillab/cloud-mail 完整邮箱）
 - hotmail/outlookmail: 需要 Hotmail账号文件，格式为 邮箱----密码----ClientID----Token
+- mailnest: 需要 mailnest_api_key（https://mailnest.top/account）与 project_code
 
 2) Cloudflare API Base（cloudflare 模式必填）
 - 示例: https://xxxx.pages.dev
@@ -3838,6 +3951,10 @@ class GrokRegisterGUI:
 - 每行格式: your@hotmail.com----mailPassword----client-id----refresh-token
 - 默认先用原邮箱，后续使用随机 plus alias（如 name+k8s2p9qa@domain）
 - 成功、失败、当前运行占用的 alias 都会去重，并通过 outlook.office365.com XOAUTH2 IMAP 收验证码
+
+8) MailNest 模式配置
+- mailnest_api_key: https://mailnest.top/account 获取
+- mailnest_project_code: https://mailnest.top/buy-email 获取，默认 x-ai001
 
 【第三步：并发与稳定性】
 6) 注册数量
