@@ -16,7 +16,35 @@ from typing import Any, Callable
 
 _REG_DIR = Path(__file__).resolve().parent
 _DEFAULT_OUT = _REG_DIR / "cpa_auths"
-_DEFAULT_CPA = Path("")  # empty = do not assume a machine-local CPA path
+# CLIProxyAPI 默认账号目录（Windows/Linux 通用）
+_DEFAULT_HOTLOAD = Path.home() / ".cli-proxy-api"
+
+
+def _parse_probe_chat_retry_delays(raw: Any) -> list[float] | None:
+    """Parse cpa_probe_chat_retry_delays: null→default, []→no retry, list/str→seconds."""
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        parts = [p.strip() for p in text.replace(";", ",").split(",") if p.strip()]
+        vals: list[float] = []
+        for p in parts:
+            try:
+                vals.append(float(p))
+            except ValueError:
+                continue
+        return vals
+    if isinstance(raw, (list, tuple)):
+        vals = []
+        for item in raw:
+            try:
+                vals.append(float(item))
+            except (TypeError, ValueError):
+                continue
+        return vals
+    return None
 
 
 def _ensure_cpa_xai_on_path(tools_dir: str | Path | None = None) -> Path:
@@ -95,10 +123,14 @@ def export_cpa_xai_for_account(
     if not out_dir.is_absolute():
         out_dir = (_REG_DIR / out_dir).resolve()
 
+    # hotload: config > 默认 ~/.cli-proxy-api；cpa_copy_to_hotload 默认 true
     hotload_raw = (cfg.get("cpa_hotload_dir") or "").strip()
+    if not hotload_raw and cfg.get("cpa_copy_to_hotload", True):
+        hotload_raw = str(_DEFAULT_HOTLOAD)
     cpa_dir = Path(hotload_raw).expanduser() if hotload_raw else None
     if cpa_dir and not cpa_dir.is_absolute():
         cpa_dir = (_REG_DIR / cpa_dir).resolve()
+    copy_to_hotload = bool(cfg.get("cpa_copy_to_hotload", True))
 
     # Priority: cpa_proxy > proxy > env. Config must beat shell https_proxy.
     proxy = (cfg.get("cpa_proxy") or cfg.get("proxy") or "").strip()
@@ -113,6 +145,15 @@ def export_cpa_xai_for_account(
     headless = bool(cfg.get("cpa_headless", False))
     probe = bool(cfg.get("cpa_probe_after_write", True))
     probe_chat = bool(cfg.get("cpa_probe_chat", True))
+    probe_chat_initial_delay = cfg.get("cpa_probe_chat_initial_delay_sec", None)
+    if probe_chat_initial_delay is not None:
+        try:
+            probe_chat_initial_delay = float(probe_chat_initial_delay)
+        except (TypeError, ValueError):
+            probe_chat_initial_delay = None
+    probe_chat_retry_delays = _parse_probe_chat_retry_delays(
+        cfg.get("cpa_probe_chat_retry_delays")
+    )
     timeout = float(cfg.get("cpa_mint_timeout_sec", 240))
     base_url = cfg.get("cpa_base_url") or "https://cli-chat-proxy.grok.com/v1"
     force_standalone = bool(cfg.get("cpa_force_standalone", True))
@@ -182,6 +223,8 @@ def export_cpa_xai_for_account(
         base_url=base_url,
         probe=probe,
         probe_chat=probe_chat,
+        probe_chat_initial_delay_sec=probe_chat_initial_delay,
+        probe_chat_retry_delays_sec=probe_chat_retry_delays,
         browser_timeout_sec=timeout,
         force_standalone=force_standalone,
         cookies=use_cookies,
@@ -211,13 +254,16 @@ def export_cpa_xai_for_account(
         result["probe_warning"] = result.pop("error", "probe failed")
         log(f"[cpa] probe warning ignored (file already written): {result.get('probe_warning')}")
 
-    if result.get("ok") and result.get("path") and cfg.get("cpa_copy_to_hotload", False) and cpa_dir:
+    if result.get("ok") and result.get("path") and copy_to_hotload and cpa_dir:
         try:
             cpa_dir.mkdir(parents=True, exist_ok=True)
             src = Path(result["path"])
             dst = cpa_dir / src.name
             shutil.copy2(src, dst)
-            os.chmod(dst, 0o600)
+            try:
+                os.chmod(dst, 0o600)
+            except OSError:
+                pass
             result["cpa_path"] = str(dst)
             log(f"[cpa] hotload copy -> {dst}")
         except Exception as e:  # noqa: BLE001

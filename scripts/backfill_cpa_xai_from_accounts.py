@@ -41,7 +41,8 @@ def main() -> int:
     ap.add_argument(
         "--cpa-dir",
         default="",
-        help="Optional CPA hot-load auth-dir; files are copied here after success",
+        help="CLIProxyAPI auth-dir; mint 成功后复制 xai-*.json 到此目录。"
+        " 空=读 config cpa_hotload_dir，再回退到 ~/.cli-proxy-api",
     )
     ap.add_argument("--limit", type=int, default=0, help="0 = all missing")
     ap.add_argument("--offset", type=int, default=0)
@@ -64,9 +65,21 @@ def main() -> int:
     ap.add_argument("--no-probe", action="store_false", dest="probe")
     ap.add_argument("--probe-chat", action="store_true", default=False)
     ap.add_argument(
+        "--browser-only",
+        action="store_true",
+        default=False,
+        help="Skip PKCE protocol mint and use headed browser consent directly",
+    )
+    ap.add_argument(
         "--proxy",
         default="",
         help="Outbound proxy. Empty → read register config.json cpa_proxy/proxy, else env",
+    )
+    ap.add_argument(
+        "--protocol-flow",
+        default="",
+        choices=["", "pkce", "device"],
+        help="CPA protocol flow: pkce (default) or device. Empty → read config cpa_protocol_flow, else pkce.",
     )
     ap.add_argument(
         "--config",
@@ -93,23 +106,24 @@ def main() -> int:
     else:
         args.headless = False
 
+    # Read register config.json once (proxy / cpa_proxy / cpa_protocol_flow / etc.)
+    cfg: dict = {}
+    try:
+        cfg_path = Path(args.config)
+        if cfg_path.is_file():
+            loaded = json.loads(cfg_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                cfg = {
+                    k: v
+                    for k, v in loaded.items()
+                    if not (isinstance(k, str) and (k.startswith("//") or k.startswith("#")))
+                }
+    except Exception as e:  # noqa: BLE001
+        print(f"warn: read config failed: {e}", flush=True)
+
     # Resolve proxy: CLI > config cpa_proxy/proxy > env
     if not args.proxy:
-        try:
-            cfg_path = Path(args.config)
-            if cfg_path.is_file():
-                cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
-                if isinstance(cfg, dict):
-                    cfg = {
-                        k: v
-                        for k, v in cfg.items()
-                        if not (isinstance(k, str) and (k.startswith("//") or k.startswith("#")))
-                    }
-                    args.proxy = (cfg.get("cpa_proxy") or cfg.get("proxy") or "").strip()
-                    if not args.cpa_dir:
-                        args.cpa_dir = (cfg.get("cpa_hotload_dir") or "").strip()
-        except Exception as e:  # noqa: BLE001
-            print(f"warn: read config proxy failed: {e}", flush=True)
+        args.proxy = (cfg.get("cpa_proxy") or cfg.get("proxy") or "").strip()
     if not args.proxy:
         args.proxy = (
             os.environ.get("https_proxy")
@@ -118,6 +132,30 @@ def main() -> int:
             or ""
         ).strip()
     print(f"proxy={args.proxy or '(none)'}", flush=True)
+
+    if not args.cpa_dir:
+        args.cpa_dir = (cfg.get("cpa_hotload_dir") or "").strip()
+    if not args.cpa_dir:
+        # 默认推送到本机 CLIProxyAPI 账号目录
+        args.cpa_dir = str(Path.home() / ".cli-proxy-api")
+    print(f"cpa_hotload_dir={args.cpa_dir}", flush=True)
+
+    # Protocol flow: CLI > config cpa_protocol_flow > pkce
+    if not args.protocol_flow:
+        args.protocol_flow = str(cfg.get("cpa_protocol_flow") or "pkce").strip().lower()
+    if args.protocol_flow not in {"pkce", "device"}:
+        print(f"warn: invalid protocol_flow={args.protocol_flow!r}, fallback to pkce", flush=True)
+        args.protocol_flow = "pkce"
+    args.allow_device_flow_fallback = bool(cfg.get("cpa_allow_device_flow_fallback", False))
+    args.protocol_only = bool(cfg.get("cpa_protocol_only", False))
+    args.protocol_poll_timeout = float(cfg.get("cpa_protocol_poll_timeout_sec", 90) or 90)
+    print(
+        f"protocol_flow={args.protocol_flow} "
+        f"allow_device_flow_fallback={args.allow_device_flow_fallback} "
+        f"protocol_only={args.protocol_only} "
+        f"poll_timeout={args.protocol_poll_timeout}",
+        flush=True,
+    )
 
     accounts = parse_accounts_file(args.accounts)
     if args.email:
@@ -163,7 +201,11 @@ def main() -> int:
             browser_timeout_sec=args.timeout,
             force_standalone=args.force_standalone,
             sso=acc.sso or None,
-            prefer_protocol=True,
+            prefer_protocol=not args.browser_only,
+            protocol_flow=args.protocol_flow,
+            allow_device_flow_fallback=args.allow_device_flow_fallback,
+            protocol_only=args.protocol_only,
+            protocol_poll_timeout_sec=args.protocol_poll_timeout,
             log=log,
         )
         results.append(r)

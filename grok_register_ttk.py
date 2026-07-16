@@ -31,11 +31,12 @@ DEFAULT_CONFIG = {
     "duckmail_api_key": "",
     "cloudflare_api_base": "",
     "cloudflare_api_key": "",
-    "cloudflare_auth_mode": "bearer",
-    "cloudflare_path_domains": "/domains",
-    "cloudflare_path_accounts": "/accounts",
-    "cloudflare_path_token": "/token",
-    "cloudflare_path_messages": "/messages",
+    "cloudflare_admin_password": "",
+    "cloudflare_auth_mode": "none",
+    "cloudflare_path_domains": "/api/domains",
+    "cloudflare_path_accounts": "/admin/new_address",
+    "cloudflare_path_token": "/api/token",
+    "cloudflare_path_messages": "/api/parsed_mails",
     "proxy": "http://127.0.0.1:7890",
     "register_headless": False,
     "enable_nsfw": True,
@@ -397,7 +398,7 @@ def get_cloudflare_api_key():
 
 
 def get_cloudflare_auth_mode():
-    return str(config.get("cloudflare_auth_mode", "bearer") or "bearer").lower()
+    return str(config.get("cloudflare_auth_mode", "none") or "none").lower()
 
 
 def get_cloudflare_path(key, default_path):
@@ -448,42 +449,42 @@ def _pick_list_payload(data):
 
 
 def cloudflare_create_temp_address(api_base):
-    """适配 cloudflare_temp_email: POST /admin/new_address -> {address,jwt}"""
     global _cf_domain_index
     import random
     import string
-    # 使用配置中的 path_accounts 或默认 /admin/new_address
-    path = config.get("cloudflare_path_accounts", "/admin/new_address")
-    url = f"{api_base}{path}"
-    admin_password = config.get("cloudflare_admin_password", "")
 
-    # 生成随机用户名
+    path = get_cloudflare_path("cloudflare_path_accounts", "/admin/new_address")
+    url = f"{api_base}{path}"
+    admin_password = str(config.get("cloudflare_admin_password", "") or "").strip()
+    if not admin_password:
+        raise Exception("Cloudflare cloudflare_admin_password 未配置")
+
     def random_name():
         return "".join(random.choices(string.ascii_lowercase, k=5)) + \
                "".join(random.choices(string.digits, k=random.randint(1, 3))) + \
                "".join(random.choices(string.ascii_lowercase, k=random.randint(1, 3)))
 
     payload = {"enablePrefix": True, "name": random_name()}
+    domains = [x.strip() for x in re.split(r"[,，\s]+", str(config.get("defaultDomains", "") or "")) if x.strip()]
+    if domains:
+        payload["domain"] = domains[_cf_domain_index % len(domains)]
+        _cf_domain_index += 1
+
+    resp = http_post(
+        url,
+        json=payload,
+        headers={"Content-Type": "application/json", "x-admin-auth": admin_password},
+    )
     try:
-        # 在多个域名之间轮换，降低单域偶发不收件导致的失败率
-        domains = [x.strip() for x in re.split(r"[,，\s]+", str(config.get("defaultDomains", "") or "")) if x.strip()]
-        if domains:
-            payload["domain"] = domains[_cf_domain_index % len(domains)]
-            _cf_domain_index += 1
-    except Exception:
-        pass
-    # 使用 x-admin-auth 认证
-    headers = {"Content-Type": "application/json"}
-    if admin_password:
-        headers["x-admin-auth"] = admin_password
-    resp = http_post(url, json=payload, headers=headers)
-    resp.raise_for_status()
+        resp.raise_for_status()
+    except Exception as exc:
+        raise Exception(f"Cloudflare {path} 创建邮箱失败: HTTP {resp.status_code} {resp.text[:300]}") from exc
     try:
         data = resp.json()
     except Exception:
         raise Exception(f"Cloudflare {path} 返回非JSON: {resp.text[:300]}")
-    address = data.get("address")
-    jwt = data.get("jwt")
+    address = str(data.get("address") or "").strip()
+    jwt = str(data.get("jwt") or "").strip()
     if not address or not jwt:
         raise Exception(f"Cloudflare {path} 缺少 address/jwt: {data}")
     return address, jwt
@@ -886,37 +887,61 @@ def cloudflare_get_token(api_base, address, password, api_key=None):
 
 def cloudflare_get_messages(api_base, token):
     headers = {"Authorization": f"Bearer {token}"}
-    path = get_cloudflare_path("cloudflare_path_messages", "/messages")
-    params = {"limit": 20, "offset": 0}
-    params = cloudflare_apply_auth_params(params)
-    resp = http_get(f"{api_base}{path}", headers=headers, params=params)
-    resp.raise_for_status()
-    try:
-        data = resp.json()
-    except Exception:
-        raise Exception(f"Cloudflare messages 返回非JSON: {resp.text[:300]}")
-    return _pick_list_payload(data)
+    configured_path = get_cloudflare_path("cloudflare_path_messages", "/api/parsed_mails")
+    candidates = []
+    for path in (configured_path, "/api/parsed_mails", "/api/mails"):
+        if path not in candidates:
+            candidates.append(path)
+    last_err = None
+    for path in candidates:
+        try:
+            resp = http_get(
+                f"{api_base}{path}",
+                headers=headers,
+                params={"limit": 20, "offset": 0},
+            )
+            if resp.status_code == 404:
+                last_err = f"{path} HTTP 404"
+                continue
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+            except Exception:
+                raise Exception(f"Cloudflare {path} 返回非JSON: {resp.text[:300]}")
+            return _pick_list_payload(data)
+        except Exception as exc:
+            last_err = exc
+            if "404" in str(exc):
+                continue
+            raise
+    raise Exception(f"Cloudflare 拉取邮件列表失败: {last_err}")
 
 
 def cloudflare_get_message_detail(api_base, token, message_id):
     headers = {"Authorization": f"Bearer {token}"}
+    configured_path = get_cloudflare_path("cloudflare_path_messages", "/api/parsed_mails").rstrip("/")
     candidates = [
+        f"{api_base}/api/parsed_mail/{message_id}",
         f"{api_base}/api/mail/{message_id}",
-        f"{api_base}{get_cloudflare_path('cloudflare_path_messages', '/messages')}/{message_id}",
+        f"{api_base}{configured_path}/{message_id}",
+        f"{api_base}/api/mails/{message_id}",
     ]
     last_err = None
+    seen = set()
     for url in candidates:
+        if url in seen:
+            continue
+        seen.add(url)
         try:
-            resp = http_get(
-                url,
-                headers=headers,
-                params=cloudflare_apply_auth_params(),
-            )
+            resp = http_get(url, headers=headers)
+            if resp.status_code in (404, 405):
+                last_err = f"{url} HTTP {resp.status_code}"
+                continue
             resp.raise_for_status()
             data = resp.json()
             if isinstance(data, dict) and isinstance(data.get("data"), dict):
                 return data["data"]
-            return data
+            return data if isinstance(data, dict) else {}
         except Exception as exc:
             last_err = exc
             continue
@@ -1915,30 +1940,7 @@ def get_email_and_token(api_key=None):
         api_base = get_cloudflare_api_base()
         if not api_base:
             raise Exception("Cloudflare API Base 未配置")
-        try:
-            # cloudflare_temp_email 专用模式
-            return cloudflare_create_temp_address(api_base)
-        except Exception as primary_exc:
-            # 兜底回退到 Mail.tm 风格
-            key = api_key or get_cloudflare_api_key()
-            domains = cloudflare_get_domains(api_base, api_key=key)
-            if not domains:
-                raise Exception(f"Cloudflare 创建邮箱失败: {primary_exc}")
-            verified = [d for d in domains if d.get("isVerified")]
-            target = verified[0] if verified else domains[0]
-            domain = target.get("domain")
-            if not domain:
-                raise Exception("Cloudflare 域名数据格式错误，缺少 domain 字段")
-            username = generate_username(10)
-            address = f"{username}@{domain}"
-            password = secrets.token_urlsafe(12)
-            cloudflare_create_account(
-                api_base, address, password, api_key=key, expires_in=0
-            )
-            token = cloudflare_get_token(api_base, address, password, api_key=key)
-            if not token:
-                raise Exception("获取 Cloudflare 邮箱 token 失败")
-            return address, token
+        return cloudflare_create_temp_address(api_base)
     key = api_key or get_duckmail_api_key()
     domain = pick_domain(api_key=key)
     username = generate_username(10)
@@ -2129,20 +2131,27 @@ def cloudflare_get_oai_code(
             if attempt >= 5:
                 continue
             seen_attempts[msg_id] = attempt + 1
-            recipients = [t.get("address", "").lower() for t in (msg.get("to") or [])]
+            raw_to = msg.get("to") or []
+            recipients = []
+            if isinstance(raw_to, list):
+                for target in raw_to:
+                    if isinstance(target, dict):
+                        recipients.append(str(target.get("address", "")).lower())
+                    elif isinstance(target, str):
+                        recipients.append(target.lower())
+            elif isinstance(raw_to, str):
+                recipients.append(raw_to.lower())
             msg_addr = str(msg.get("address", "")).lower()
-            # 优先匹配目标邮箱；若结构不一致也允许继续解析，避免接口字段漂移导致漏码
             address_matched = True
             if recipients:
-                address_matched = email.lower() in recipients
+                address_matched = any(email.lower() in target for target in recipients)
             elif msg_addr:
-                address_matched = msg_addr == email.lower()
+                address_matched = email.lower() in msg_addr
             if not address_matched and log_callback:
                 log_callback(f"[Debug] 跳过疑似非目标邮件 id={msg_id} address={msg_addr} to={recipients}")
                 continue
             parts = []
-            # 先直接从列表项取内容，避免 detail 接口差异导致漏码
-            for field in ("text", "raw", "content", "intro", "body", "snippet"):
+            for field in ("text", "raw", "source", "content", "intro", "body", "snippet"):
                 value = msg.get(field)
                 if isinstance(value, str) and value.strip():
                     parts.append(value)
@@ -2156,7 +2165,7 @@ def cloudflare_get_oai_code(
             # 再尝试 detail 接口补全内容
             try:
                 detail = cloudflare_get_message_detail(api_base, dev_token, msg_id)
-                for field in ("text", "raw", "content", "intro", "body", "snippet"):
+                for field in ("text", "raw", "source", "content", "intro", "body", "snippet"):
                     value = detail.get(field)
                     if isinstance(value, str) and value.strip():
                         combined += "\n" + value
@@ -3645,10 +3654,10 @@ class GrokRegisterGUI:
         self.cloudflare_paths_var = tk.StringVar(
             value=",".join(
                 [
-                    config.get("cloudflare_path_domains", "/domains"),
-                    config.get("cloudflare_path_accounts", "/accounts"),
-                    config.get("cloudflare_path_token", "/token"),
-                    config.get("cloudflare_path_messages", "/messages"),
+                    config.get("cloudflare_path_domains", "/api/domains"),
+                    config.get("cloudflare_path_accounts", "/admin/new_address"),
+                    config.get("cloudflare_path_token", "/api/token"),
+                    config.get("cloudflare_path_messages", "/api/parsed_mails"),
                 ]
             )
         )

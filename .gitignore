@@ -3,6 +3,7 @@ __pycache__/
 *.pyo
 *.pyd
 .venv/
+.workbuddy
 dist/
 
 # secrets / local runtime

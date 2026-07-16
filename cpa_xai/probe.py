@@ -4,12 +4,35 @@ from __future__ import annotations
 
 import json
 import ssl
+import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from .proxyutil import resolve_proxy
 from .schema import DEFAULT_BASE_URL, DEFAULT_CLIENT_HEADERS
+
+# Wait before the first chat probe — new tokens often deny immediately after mint.
+DEFAULT_CHAT_PROBE_INITIAL_DELAY_SEC: float = 3.0
+# After a failed attempt, wait these seconds before each retry.
+DEFAULT_CHAT_PROBE_RETRY_DELAYS_SEC: tuple[float, ...] = (5.0, 15.0, 30.0)
+
+
+def _sleep_interruptible(
+    seconds: float,
+    *,
+    cancel: Callable[[], bool] | None = None,
+) -> bool:
+    """Sleep up to `seconds`. Return True if cancelled."""
+    if seconds <= 0:
+        return bool(cancel and cancel())
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if cancel and cancel():
+            return True
+        time.sleep(min(0.5, end - time.monotonic()))
+    return bool(cancel and cancel())
 
 
 def _ssl_context() -> ssl.SSLContext | None:
@@ -128,3 +151,90 @@ def probe_mini_response(
         }
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "status": 0, "error": str(e)}
+
+
+def probe_mini_response_with_retry(
+    access_token: str,
+    *,
+    base_url: str = DEFAULT_BASE_URL,
+    timeout: float = 60.0,
+    proxy: str | None = None,
+    initial_delay_sec: float | None = None,
+    retry_delays_sec: Sequence[float] | None = None,
+    log: Callable[[str], None] | None = None,
+    cancel: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
+    """Probe chat with pre-delay + delayed retries for new-account permission lag.
+
+    Default: wait 3s before first attempt, then retry after 5s / 15s / 30s.
+    Attempts = 1 + len(retry_delays).
+    """
+    init_delay = (
+        DEFAULT_CHAT_PROBE_INITIAL_DELAY_SEC
+        if initial_delay_sec is None
+        else max(0.0, float(initial_delay_sec))
+    )
+    delays = (
+        DEFAULT_CHAT_PROBE_RETRY_DELAYS_SEC
+        if retry_delays_sec is None
+        else tuple(float(x) for x in retry_delays_sec if float(x) >= 0)
+    )
+    attempts = 1 + len(delays)
+    last: dict[str, Any] = {"ok": False, "status": 0, "error": "chat probe not attempted"}
+    _log = log or (lambda _m: None)
+
+    if init_delay > 0:
+        _log(f"probe chat: wait {init_delay:g}s before first attempt")
+        if _sleep_interruptible(init_delay, cancel=cancel):
+            return {
+                "ok": False,
+                "status": 0,
+                "error": "cancelled during chat probe initial wait",
+                "attempts": 0,
+                "attempted": 0,
+            }
+
+    for i in range(attempts):
+        if cancel and cancel():
+            last = {
+                "ok": False,
+                "status": 0,
+                "error": "cancelled",
+                "attempts": i,
+                "attempted": i,
+            }
+            return last
+
+        last = probe_mini_response(
+            access_token,
+            base_url=base_url,
+            timeout=timeout,
+            proxy=proxy,
+        )
+        last["attempts"] = i + 1
+        last["attempted"] = i + 1
+        if last.get("ok"):
+            if i > 0:
+                _log(f"probe chat retry success on attempt {i + 1}/{attempts}")
+            return last
+
+        err = str(last.get("error") or last.get("status") or "unknown")[:200]
+        if i >= len(delays):
+            _log(f"probe chat failed after {attempts} attempt(s): {err}")
+            break
+
+        wait = delays[i]
+        _log(
+            f"probe chat attempt {i + 1}/{attempts} failed ({err}); "
+            f"retry in {wait:g}s"
+        )
+        if _sleep_interruptible(wait, cancel=cancel):
+            return {
+                "ok": False,
+                "status": 0,
+                "error": "cancelled during chat probe retry wait",
+                "attempts": i + 1,
+                "attempted": i + 1,
+            }
+
+    return last

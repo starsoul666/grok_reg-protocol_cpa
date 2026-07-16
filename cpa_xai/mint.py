@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Callable
 
 from .browser_confirm import mint_with_browser
 from .pkce_mint import PKCEMintError, mint_with_sso_pkce
-from .probe import probe_mini_response, probe_models
+from .probe import (
+    DEFAULT_CHAT_PROBE_INITIAL_DELAY_SEC,
+    DEFAULT_CHAT_PROBE_RETRY_DELAYS_SEC,
+    probe_mini_response_with_retry,
+    probe_models,
+)
 from .protocol_mint import ProtocolMintError, extract_sso_from_cookies, mint_with_sso_protocol
 from .proxyutil import proxy_log_label, resolve_proxy, set_runtime_proxy
 from .schema import DEFAULT_BASE_URL, build_cpa_xai_auth
@@ -31,6 +37,8 @@ def mint_and_export(
     base_url: str = DEFAULT_BASE_URL,
     probe: bool = True,
     probe_chat: bool = False,
+    probe_chat_initial_delay_sec: float | None = None,
+    probe_chat_retry_delays_sec: Sequence[float] | None = None,
     browser_timeout_sec: float = 240.0,
     force_standalone: bool = True,
     cookies: Any | None = None,
@@ -232,12 +240,39 @@ def mint_and_export(
             result["ok"] = False
             result["error"] = "token ok but grok-4.5 not listed"
         if probe_chat and pr.get("has_grok_45"):
-            ch = probe_mini_response(
-                tokens["access_token"], base_url=base_url, proxy=resolved or None
+            init_delay = (
+                DEFAULT_CHAT_PROBE_INITIAL_DELAY_SEC
+                if probe_chat_initial_delay_sec is None
+                else probe_chat_initial_delay_sec
+            )
+            delays = (
+                DEFAULT_CHAT_PROBE_RETRY_DELAYS_SEC
+                if probe_chat_retry_delays_sec is None
+                else probe_chat_retry_delays_sec
+            )
+            log(
+                "probe chat: start "
+                f"(initial_delay_sec={init_delay}, "
+                f"attempts={1 + len(tuple(delays))}, retry_delays_sec={list(delays)})"
+            )
+            ch = probe_mini_response_with_retry(
+                tokens["access_token"],
+                base_url=base_url,
+                proxy=resolved or None,
+                initial_delay_sec=init_delay,
+                retry_delays_sec=delays,
+                log=log,
+                cancel=cancel,
             )
             result["probe_chat"] = ch
-            log(f"probe chat: ok={ch.get('ok')} model={ch.get('model')} text={ch.get('text')!r}")
+            log(
+                f"probe chat: ok={ch.get('ok')} attempts={ch.get('attempts')} "
+                f"model={ch.get('model')} text={ch.get('text')!r}"
+            )
             if not ch.get("ok"):
                 result["ok"] = False
-                result["error"] = f"chat probe failed: {ch.get('error') or ch.get('status')}"
+                result["error"] = (
+                    f"chat probe failed after {ch.get('attempts') or '?'} attempt(s): "
+                    f"{ch.get('error') or ch.get('status')}"
+                )
     return result

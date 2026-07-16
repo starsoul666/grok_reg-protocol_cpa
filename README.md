@@ -64,7 +64,11 @@
   "email_provider": "cloudflare",
   "cloudflare_api_base": "https://your-api-domain.com",
   "cloudflare_admin_password": "your-admin-password",
+  "cloudflare_auth_mode": "none",
+  "cloudflare_path_domains": "/api/domains",
   "cloudflare_path_accounts": "/admin/new_address",
+  "cloudflare_path_token": "/api/token",
+  "cloudflare_path_messages": "/api/parsed_mails",
   "defaultDomains": "your-domain.com"
 }
 ```
@@ -72,9 +76,16 @@
 | 配置项 | 说明 |
 |--------|------|
 | `cloudflare_api_base` | API 基础地址 |
-| `cloudflare_admin_password` | 管理员密码（用于 `x-admin-auth` 认证） |
-| `cloudflare_path_accounts` | 创建邮箱的端点（默认 `/admin/new_address`） |
-| `defaultDomains` | 邮箱域名 |
+| `cloudflare_api_key` | 通用 API Key；配合 `cloudflare_auth_mode` 发送 Bearer、`X-API-Key` 或 query 参数 |
+| `cloudflare_auth_mode` | 通用 API Key 认证模式：`none` / `bearer` / `x-api-key` / `query-key`；不控制 `x-admin-auth` |
+| `cloudflare_admin_password` | 管理员密码；配置后创建地址和拉域名会发送 `x-admin-auth`，CLI / GUI 都生效 |
+| `cloudflare_path_domains` | 拉取域名的端点 |
+| `cloudflare_path_accounts` | 创建邮箱的端点 |
+| `cloudflare_path_token` | 账号密码模式获取 token 的端点 |
+| `cloudflare_path_messages` | 拉取邮件列表的端点；推荐 `/api/parsed_mails`，旧部署会回退 `/api/mails` |
+| `defaultDomains` | 邮箱域名；多个域名可用逗号、中文逗号或空格分隔 |
+
+Cloudflare 临时邮箱流程中，创建地址走 `/admin/new_address` 并携带 `x-admin-auth`；读取邮件只使用创建地址返回的 JWT 作为 `Authorization: Bearer <jwt>`。
 
 ### 1. Hotmail / Outlook：`邮箱----密码----ClientID----Token`
 
@@ -338,6 +349,12 @@ uv run python -u scripts/backfill_cpa_xai_from_accounts.py \
   --accounts accounts_cli.txt \
   --limit 1 --probe --timeout 300
 
+# PKCE set-cookie 被 403 时，直接走有头浏览器 consent
+uv run python -u scripts/backfill_cpa_xai_from_accounts.py \
+  --accounts accounts_cli.txt \
+  --email "user@example.com" \
+  --limit 1 --no-skip-existing --browser-only --probe --probe-chat --timeout 300
+
 # 全量缺失号
 uv run python -u scripts/backfill_cpa_xai_from_accounts.py \
   --limit 0 --probe --timeout 300 --sleep 3
@@ -350,6 +367,8 @@ uv run python -u scripts/backfill_cpa_xai_from_accounts.py \
 | `--out-dir` | 主导出目录 |
 | `--cpa-dir` | 成功后复制到 CPA 热加载目录 |
 | `--probe` | 检查是否列出 `grok-4.5` |
+| `--probe-chat` | 再打一发最小 chat 探测，避免 `/models` 误判 |
+| `--browser-only` | 跳过 PKCE，直接走有头浏览器 consent；适合 `set-cookie HTTP 403` |
 | `--headless` | 回退浏览器时无头（不推荐） |
 
 ### C. 从 `~/.grok/auth.json` 导出 CPA 文件
