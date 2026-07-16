@@ -246,16 +246,19 @@ def export_cpa_xai_for_account(
             cpa_dir.mkdir(parents=True, exist_ok=True)
             src = Path(result["path"])
             dst = cpa_dir / src.name
-            shutil.copy2(src, dst)
+            # 移动而非复制：hotload 目录作为唯一存储，避免 cpa_auths 与 hotload 双份
+            shutil.move(str(src), str(dst))
             try:
                 os.chmod(dst, 0o600)
             except OSError:
                 pass
             result["cpa_path"] = str(dst)
-            log(f"[cpa] hotload copy -> {dst}")
+            # 同步更新 path，指向文件实际所在位置
+            result["path"] = str(dst)
+            log(f"[cpa] hotload move -> {dst}")
         except Exception as e:  # noqa: BLE001
-            log(f"[cpa] hotload copy failed: {e}")
-            result["cpa_copy_error"] = str(e)
+            log(f"[cpa] hotload move failed: {e}")
+            result["cpa_move_error"] = str(e)
 
     # failure log under register dir
     if not result.get("ok"):

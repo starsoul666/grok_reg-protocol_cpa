@@ -104,7 +104,7 @@ grok_reg-protocol_cpa/
 | `cpa_prefer_protocol` | 是否优先协议 mint（默认 `true`） |
 | `cpa_protocol_flow` | 协议 mint 流程：`pkce`（默认推荐）或 `device`（旧 Device Flow） |
 | `cpa_auth_dir` | CPA 认证文件输出目录（默认 `./cpa_auths`） |
-| `cpa_copy_to_hotload` | mint 成功后是否复制到 CLIProxyAPI 目录（默认 `true`） |
+| `cpa_copy_to_hotload` | mint 成功后是否移动到 CLIProxyAPI 目录（移动后 cpa_auths 不保留副本，默认 `true`） |
 | `cpa_hotload_dir` | CLIProxyAPI 账号目录（默认 `~/.cli-proxy-api`） |
 | `cpa_base_url` | 免费 Grok 4.5 上游 API（必须为 `https://cli-chat-proxy.grok.com/v1`） |
 | `proxy` / `cpa_proxy` | 注册和 mint 的代理配置 |

@@ -209,7 +209,7 @@ your@hotmail.com----mailPassword----xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx----0.AX
  OIDC mint（协议优先 → 浏览器回退）
        ↓
  cpa_auths/xai-email.json             【注册机主导出】
-       ↓ (cpa_copy_to_hotload=true 时)
+       ↓ (cpa_copy_to_hotload=true 时移动，原文件移走)
  CPA auth-dir 热加载                  【可选】
        ↓
  CLIProxyAPI :8317                    model=grok-4.5
@@ -295,8 +295,8 @@ cpa_proxy  >  proxy  >  环境变量 https_proxy/http_proxy
 | `cpa_prefer_protocol` | SSO 协议优先 | `true` |
 | `cpa_protocol_only` | 仅协议、不回退浏览器 | 调试时 `true`，日常 `false` |
 | `cpa_auth_dir` | **主导出目录** | `./cpa_auths` |
-| `cpa_copy_to_hotload` | 是否复制到 CPA 热加载目录 | 可选，默认 `false` |
-| `cpa_hotload_dir` | CPA `auth-dir` | 仅 copy 时需要 |
+| `cpa_copy_to_hotload` | 是否移动到 CPA 热加载目录（移动后原 `cpa_auths` 副本不保留） | 可选，默认 `false` |
+| `cpa_hotload_dir` | CPA `auth-dir` | 仅 move 时需要 |
 | `cpa_base_url` | 上游 API 根 | **必须** `https://cli-chat-proxy.grok.com/v1` |
 | `cpa_headless` | 回退浏览器是否无头 | **`false`** |
 | `cpa_force_standalone` | 回退时独立浏览器 | **`true`** |
@@ -352,7 +352,7 @@ uv run python grok_register_ttk.py
 1. 追加账本 `email----password----sso`
 2. 可选：推 grok2api
 3. 若 `cpa_export_enabled`：协议 mint（失败则浏览器）→ `cpa_auths/xai-<email>.json`
-4. 若 `cpa_copy_to_hotload`：再拷到 `cpa_hotload_dir`
+4. 若 `cpa_copy_to_hotload`：移动到 `cpa_hotload_dir`（不再保留 `cpa_auths` 中的副本）
 
 ### B. 存量号补 CPA（只 mint，不重新注册）
 

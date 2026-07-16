@@ -594,7 +594,7 @@ def main() -> int:
             flush=True,
         )
     print(f"[*] accounts_file = {args.accounts_file}", flush=True)
-    # mint 成功后 hotload 目标（实际复制由 cpa_export 完成）
+    # mint 成功后 hotload 目标（实际移动由 cpa_export 完成）
     if cfg0.get("cpa_copy_to_hotload", True):
         _hotload = (cfg0.get("cpa_hotload_dir") or "").strip() or str(
             Path.home() / ".cli-proxy-api"

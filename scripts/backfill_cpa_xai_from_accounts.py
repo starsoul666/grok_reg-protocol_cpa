@@ -229,13 +229,13 @@ def main() -> int:
         results.append(r)
         if r.get("ok") and r.get("path"):
             ok_n += 1
-            # mirror into CPA auth-dir
+            # move into CPA auth-dir（hotload 唯一存储，避免双份）
             if args.cpa_dir:
                 src = Path(r["path"])
                 dst = Path(args.cpa_dir) / src.name
-                shutil.copy2(src, dst)
+                shutil.move(str(src), str(dst))
                 os.chmod(dst, 0o600)
-                print(f"copied -> {dst}", flush=True)
+                print(f"moved -> {dst}", flush=True)
         else:
             fail_n += 1
             if args.fail_log:
