@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 import traceback
+from pathlib import Path
 from typing import Any
 
 # 强制走本目录的 grok_register_ttk
@@ -382,6 +383,8 @@ def _run_mint_job(worker_id: int | str, job: dict[str, Any], config: dict) -> di
         )
         if result.get("ok"):
             log(worker_id, f"+ CPA auth: {result.get('path')}")
+            if result.get("cpa_path"):
+                log(worker_id, f"+ CPA hotload: {result.get('cpa_path')}")
             _inc("mint_success")
         elif result.get("skipped"):
             _inc("mint_skip")
@@ -591,6 +594,12 @@ def main() -> int:
             flush=True,
         )
     print(f"[*] accounts_file = {args.accounts_file}", flush=True)
+    # mint 成功后 hotload 目标（实际复制由 cpa_export 完成）
+    if cfg0.get("cpa_copy_to_hotload", True):
+        _hotload = (cfg0.get("cpa_hotload_dir") or "").strip() or str(
+            Path.home() / ".cli-proxy-api"
+        )
+        print(f"[*] CPA hotload -> {_hotload}", flush=True)
     if done_count > 0:
         print(f"[*] 断点续跑：已完成 {done_count}", flush=True)
     if remaining is not None and remaining <= 0:

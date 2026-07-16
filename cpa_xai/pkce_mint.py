@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import base64
 import hashlib
-import json
 import re
 import secrets
 import time
 from typing import Any, Callable
-from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 
 from . import grpcweb
 from .oauth_device import CLIENT_ID, ISSUER, SCOPE
@@ -19,7 +18,6 @@ AUTHORIZATION_ENDPOINT = f"{ISSUER}/oauth2/authorize"
 TOKEN_ENDPOINT = f"{ISSUER}/oauth2/token"
 ACCOUNTS_ORIGIN = "https://accounts.x.ai"
 CREATE_COOKIE_SETTER_RPC = f"{ACCOUNTS_ORIGIN}/auth_mgmt.AuthManagement/CreateCookieSetterLink"
-SUBMIT_OAUTH2_CONSENT_ACTION = "4005315a1d7e426de592990bb54bb37471f39dd6d2"
 DEFAULT_REDIRECT_URI = "http://127.0.0.1:56121/callback"
 
 LogFn = Callable[[str], None]
@@ -191,62 +189,70 @@ def _submit_consent(
     code_challenge: str,
     nonce: str,
 ) -> str:
-    action_id = SUBMIT_OAUTH2_CONSENT_ACTION
-    match = re.search(r'createServerReference\)\("([a-f0-9]{40,44})"[^)]*submitOAuth2Consent', page_html)
-    if not match:
-        match = re.search(r'createServerReference\)\("([a-f0-9]{40,44})"', page_html)
-    if match:
-        action_id = match.group(1)
+    """Submit the OAuth2 consent via traditional form POST.
 
-    router_tree = (
-        '["",{"children":["(app)",{"children":["(auth)",{"children":["oauth2",'
-        '{"children":["consent",{"children":["__PAGE__",{}]}]}]}]}]},'
-        '"$undefined","$undefined",16]'
+    accounts.x.ai renders the consent page as a plain HTML
+    ``<form method="POST" action="https://auth.x.ai/oauth2/authorize">`` with all
+    PKCE params as hidden inputs (server pre-fills them from the query string).
+    Posting those fields back while the SSO cookie is set returns
+    ``303 -> redirect_uri?code=...&state=...``.
+
+    The Allow/Deny buttons are ``type="button"`` (JS-driven) and no extra decision
+    field is required — a plain form POST is treated as Allow. The
+    client_id/redirect_uri/scope/code_challenge/nonce args are kept for signature
+    compatibility but not used (we reuse the server's hidden fields); ``state`` is
+    still used to validate the returned code (CSRF check).
+    """
+    fm = re.search(
+        r'<form\b[^>]*method="POST"[^>]*action="([^"]+)"[^>]*>(.*?)</form>',
+        page_html,
+        re.I | re.S,
     )
-    payload = [
-        {
-            "action": "allow",
-            "clientId": client_id,
-            "redirectUri": redirect_uri,
-            "scope": scope,
-            "state": state,
-            "codeChallenge": code_challenge,
-            "codeChallengeMethod": "S256",
-            "nonce": nonce,
-            "principalType": "User",
-            "principalId": "",
-            "referrer": "",
-        }
-    ]
+    if not fm:
+        fm = re.search(
+            r'<form\b[^>]*action="([^"]+)"[^>]*method="POST"[^>]*>(.*?)</form>',
+            page_html,
+            re.I | re.S,
+        )
+    if not fm:
+        raise PKCEMintError("consent page has no POST form; cannot submit OAuth2 consent")
+    action_url, form_inner = fm.group(1), fm.group(2)
+
+    fields: dict[str, str] = {}
+    for inp in re.findall(r'<input\b([^>]*)/?>', form_inner, re.I):
+        nm = re.search(r'name="([^"]*)"', inp, re.I)
+        vl = re.search(r'value="([^"]*)"', inp, re.I)
+        if nm:
+            fields[nm.group(1)] = vl.group(1) if vl else ""
+    if not fields:
+        raise PKCEMintError("consent form has no input fields")
+
     headers = {
-        "accept": "text/x-component",
-        "content-type": "text/plain;charset=UTF-8",
-        "next-action": action_id,
-        "next-router-state-tree": quote(router_tree, safe=""),
+        "content-type": "application/x-www-form-urlencoded",
         "origin": ACCOUNTS_ORIGIN,
         "referer": page_url,
         "sec-fetch-site": "same-origin",
         "sec-fetch-mode": "cors",
         "sec-fetch-dest": "empty",
     }
-    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
-    post_url = page_url.split("?")[0] if "consent" in page_url else page_url
-    resp = session.post(post_url, headers=headers, data=body, timeout=45)
-    text = resp.text or ""
-    if resp.status_code >= 400 or ("error" in text[:200].lower() and "code" not in text):
-        resp = session.post(page_url, headers=headers, data=body, timeout=45)
-        text = resp.text or ""
+    resp = session.post(action_url, data=fields, headers=headers, allow_redirects=False, timeout=45)
 
-    match = re.search(r'"code"\s*:\s*"([^"]+)"', text)
-    if match:
-        return match.group(1)
-    match = re.search(r"code=([A-Za-z0-9._~\-]+)", text)
-    if match and "error" not in match.group(0):
-        return match.group(1)
     loc = resp.headers.get("location") or resp.headers.get("Location") or ""
     if "code=" in loc:
-        return _code_from_url(urljoin(page_url, loc), state)
-    raise PKCEMintError(f"submitOAuth2Consent failed HTTP {resp.status_code}: {text[:300]}")
+        return _code_from_url(urljoin(action_url, loc), state)
+
+    # Fallbacks: 200 with code embedded in body / meta refresh
+    text = resp.text or ""
+    m = re.search(r'"code"\s*:\s*"([^"]+)"', text)
+    if m:
+        return m.group(1)
+    m = re.search(r"code=([A-Za-z0-9._~\-]+)", text)
+    if m and "error" not in m.group(0):
+        return m.group(1)
+    raise PKCEMintError(
+        f"consent form POST returned no code: HTTP {resp.status_code} "
+        f"loc={loc[:200]} body={text[:200]}"
+    )
 
 
 def _exchange_code_for_token(

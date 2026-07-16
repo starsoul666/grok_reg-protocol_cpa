@@ -16,7 +16,8 @@ from typing import Any, Callable
 
 _REG_DIR = Path(__file__).resolve().parent
 _DEFAULT_OUT = _REG_DIR / "cpa_auths"
-_DEFAULT_CPA = Path("")  # empty = do not assume a machine-local CPA path
+# CLIProxyAPI 默认账号目录（Windows/Linux 通用）
+_DEFAULT_HOTLOAD = Path.home() / ".cli-proxy-api"
 
 
 def _parse_probe_chat_retry_delays(raw: Any) -> list[float] | None:
@@ -122,10 +123,14 @@ def export_cpa_xai_for_account(
     if not out_dir.is_absolute():
         out_dir = (_REG_DIR / out_dir).resolve()
 
+    # hotload: config > 默认 ~/.cli-proxy-api；cpa_copy_to_hotload 默认 true
     hotload_raw = (cfg.get("cpa_hotload_dir") or "").strip()
+    if not hotload_raw and cfg.get("cpa_copy_to_hotload", True):
+        hotload_raw = str(_DEFAULT_HOTLOAD)
     cpa_dir = Path(hotload_raw).expanduser() if hotload_raw else None
     if cpa_dir and not cpa_dir.is_absolute():
         cpa_dir = (_REG_DIR / cpa_dir).resolve()
+    copy_to_hotload = bool(cfg.get("cpa_copy_to_hotload", True))
 
     # Priority: cpa_proxy > proxy > env. Config must beat shell https_proxy.
     proxy = (cfg.get("cpa_proxy") or cfg.get("proxy") or "").strip()
@@ -249,13 +254,16 @@ def export_cpa_xai_for_account(
         result["probe_warning"] = result.pop("error", "probe failed")
         log(f"[cpa] probe warning ignored (file already written): {result.get('probe_warning')}")
 
-    if result.get("ok") and result.get("path") and cfg.get("cpa_copy_to_hotload", False) and cpa_dir:
+    if result.get("ok") and result.get("path") and copy_to_hotload and cpa_dir:
         try:
             cpa_dir.mkdir(parents=True, exist_ok=True)
             src = Path(result["path"])
             dst = cpa_dir / src.name
             shutil.copy2(src, dst)
-            os.chmod(dst, 0o600)
+            try:
+                os.chmod(dst, 0o600)
+            except OSError:
+                pass
             result["cpa_path"] = str(dst)
             log(f"[cpa] hotload copy -> {dst}")
         except Exception as e:  # noqa: BLE001

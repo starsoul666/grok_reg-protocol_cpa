@@ -41,7 +41,8 @@ def main() -> int:
     ap.add_argument(
         "--cpa-dir",
         default="",
-        help="Optional CPA hot-load auth-dir; files are copied here after success",
+        help="CLIProxyAPI auth-dir; mint 成功后复制 xai-*.json 到此目录。"
+        " 空=读 config cpa_hotload_dir，再回退到 ~/.cli-proxy-api",
     )
     ap.add_argument("--limit", type=int, default=0, help="0 = all missing")
     ap.add_argument("--offset", type=int, default=0)
@@ -134,6 +135,10 @@ def main() -> int:
 
     if not args.cpa_dir:
         args.cpa_dir = (cfg.get("cpa_hotload_dir") or "").strip()
+    if not args.cpa_dir:
+        # 默认推送到本机 CLIProxyAPI 账号目录
+        args.cpa_dir = str(Path.home() / ".cli-proxy-api")
+    print(f"cpa_hotload_dir={args.cpa_dir}", flush=True)
 
     # Protocol flow: CLI > config cpa_protocol_flow > pkce
     if not args.protocol_flow:
