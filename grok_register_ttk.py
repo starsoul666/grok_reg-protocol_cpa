@@ -2138,22 +2138,63 @@ def get_oai_code(
 
 
 def extract_verification_code(text, subject=""):
+    """从主题/正文提取 xAI 验证码。
+
+    优先主题与“confirmation code”上下文；过滤正文中的伪匹配
+    （如 HTML/CSS 里的 per-100）。
+    """
+    code_token = r"([A-Z0-9]{3}-[A-Z0-9]{3})"
+    context_pat = (
+        r"(?:confirmation\s+code|verification\s+code|confirm(?:ation)?\s+code|"
+        r"your\s+code|验证码)\s*[:：]?\s*" + code_token
+    )
+    subject = subject or ""
+    text = text or ""
+
+    def _plausible_xai_code(code: str) -> bool:
+        if not code or "-" not in code:
+            return False
+        # 全小写多为 HTML/CSS 伪码（per-100 / pre-100），真码通常含大写
+        if code == code.lower():
+            return False
+        if not re.search(r"[A-Za-z]", code):
+            return False
+        return True
+
+    # 1) 主题优先：旧格式 / 上下文 / 任意 XXX-XXX（主题可信度高）
     if subject:
-        match = re.search(r"^([A-Z0-9]{3}-[A-Z0-9]{3})\s+xAI", subject, re.IGNORECASE)
+        match = re.search(r"^" + code_token + r"\s+xAI\b", subject, re.IGNORECASE)
         if match:
             return match.group(1)
-    match = re.search(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b", text, re.IGNORECASE)
-    if match:
-        return match.group(1)
-    patterns = [
-        r"verification\s+code[:\s]+(\d{4,8})",
-        r"your\s+code[:\s]+(\d{4,8})",
-        r"confirm(?:ation)?\s+code[:\s]+(\d{4,8})",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
+        match = re.search(context_pat, subject, re.IGNORECASE)
         if match:
             return match.group(1)
+        match = re.search(r"\b" + code_token + r"\b", subject, re.IGNORECASE)
+        if match:
+            return match.group(1)
+
+    # 2) 正文：先上下文，再过滤后的裸 XXX-XXX
+    if text:
+        match = re.search(context_pat, text, re.IGNORECASE)
+        if match:
+            return match.group(1)
+        for match in re.finditer(r"\b" + code_token + r"\b", text, re.IGNORECASE):
+            code = match.group(1)
+            if _plausible_xai_code(code):
+                return code
+
+    # 3) 纯数字验证码兜底
+    for source in (subject, text):
+        if not source:
+            continue
+        for pattern in (
+            r"verification\s+code[:\s]+(\d{4,8})",
+            r"your\s+code[:\s]+(\d{4,8})",
+            r"confirm(?:ation)?\s+code[:\s]+(\d{4,8})",
+        ):
+            match = re.search(pattern, source, re.IGNORECASE)
+            if match:
+                return match.group(1)
     return None
 
 

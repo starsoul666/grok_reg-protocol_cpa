@@ -10,21 +10,55 @@ from curl_cffi import requests
 
 
 def extract_code(text: str, subject: str = "") -> Optional[str]:
+    """与 grok_register_ttk.extract_verification_code 保持一致的提取规则。"""
+    code_token = r"([A-Z0-9]{3}-[A-Z0-9]{3})"
+    context_pat = (
+        r"(?:confirmation\s+code|verification\s+code|confirm(?:ation)?\s+code|"
+        r"your\s+code|验证码)\s*[:：]?\s*" + code_token
+    )
+    subject = subject or ""
+    text = text or ""
+
+    def _plausible(code: str) -> bool:
+        if not code or "-" not in code:
+            return False
+        if code == code.lower():
+            return False
+        if not re.search(r"[A-Za-z]", code):
+            return False
+        return True
+
     if subject:
-        m = re.search(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b", subject, re.IGNORECASE)
+        m = re.search(r"^" + code_token + r"\s+xAI\b", subject, re.IGNORECASE)
         if m:
             return m.group(1)
-    m = re.search(r"\b([A-Z0-9]{3}-[A-Z0-9]{3})\b", text, re.IGNORECASE)
-    if m:
-        return m.group(1)
-    for p in [
-        r"verification\s+code[:\s]+(\d{4,8})",
-        r"your\s+code[:\s]+(\d{4,8})",
-        r"confirm(?:ation)?\s+code[:\s]+(\d{4,8})",
-    ]:
-        m = re.search(p, text, re.IGNORECASE)
+        m = re.search(context_pat, subject, re.IGNORECASE)
         if m:
             return m.group(1)
+        m = re.search(r"\b" + code_token + r"\b", subject, re.IGNORECASE)
+        if m:
+            return m.group(1)
+
+    if text:
+        m = re.search(context_pat, text, re.IGNORECASE)
+        if m:
+            return m.group(1)
+        for m in re.finditer(r"\b" + code_token + r"\b", text, re.IGNORECASE):
+            code = m.group(1)
+            if _plausible(code):
+                return code
+
+    for source in (subject, text):
+        if not source:
+            continue
+        for p in [
+            r"verification\s+code[:\s]+(\d{4,8})",
+            r"your\s+code[:\s]+(\d{4,8})",
+            r"confirm(?:ation)?\s+code[:\s]+(\d{4,8})",
+        ]:
+            m = re.search(p, source, re.IGNORECASE)
+            if m:
+                return m.group(1)
     return None
 
 
