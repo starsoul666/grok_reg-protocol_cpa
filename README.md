@@ -329,6 +329,46 @@ uv run python -u register_cli.py --extra 1 --threads 1 \
 
 > 多线程时不要共用同一个 `bitbrowser_browser_id`；请配置窗口池或开启自动创建。
 
+### AdsPower（免费版可用）
+
+1. 启动 AdsPower 客户端，右上角「API」面板开启 Local API（默认端口 `50325`）
+2. 复制一个或多个环境 `user_id`（客户端环境列表最右侧）；免费版位置有限，建议 1 线程 1 环境
+3. 在 `config.json` 设置：
+
+```json
+{
+  "browser_backend": "adspower",
+  "adspower_api": "http://local.adspower.net:50325",
+  "adspower_user_ids": ["kxxxxxxx", "kyyyyyyy"],
+  "adspower_load_turnstile_patch": true,
+  "adspower_headless": false,
+  "adspower_rate_limit_sec": 1.05
+}
+```
+
+或 CLI：
+
+```bash
+uv run python -u register_cli.py --extra 1 --threads 1 \
+  --browser-backend adspower
+```
+
+| 字段 | 说明 |
+|------|------|
+| `adspower_api` | Local API 根，默认 `http://local.adspower.net:50325` |
+| `adspower_api_key` | 免费版留空；付费版填客户端 API Key，走 `Authorization: Bearer` |
+| `adspower_user_id` | 单个 `user_id`（`threads=1`） |
+| `adspower_user_ids` | 多线程环境池，一线程占一个（免费版即并发上限） |
+| `adspower_name` | 按环境名查找；免费版找不到直接失败，不会自动创建 |
+| `adspower_load_turnstile_patch` | 通过 `launch_args` 注入本仓库 `turnstilePatch` |
+| `adspower_headless` | Turnstile 通过率有头更高，默认 `false` |
+| `adspower_rate_limit_sec` | 免费版 Local API QPS≤1，客户端进程级节流下限；付费可调小 |
+
+> 免费版特别提示：
+> - Local API 严格 QPS≤1，本模块已内置全进程串行节流；不要再自己并发调 AdsPower API。
+> - 免费位置数量固定，`register_threads` 请 ≤ `adspower_user_ids` 长度。
+> - 环境代理建议在 AdsPower 客户端里配好，`config.proxy` 保持空串或与之一致，避免双层代理走岔。
+
 ### 与 CPA 相关的关键项（摘要）
 
 | 字段 | 含义 | 建议 |
