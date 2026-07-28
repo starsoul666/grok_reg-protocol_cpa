@@ -39,7 +39,7 @@ DEFAULT_CONFIG = {
     "cloudflare_path_messages": "/api/parsed_mails",
     "proxy": "http://127.0.0.1:7890",
     "register_headless": False,
-    # browser_backend: chromium（默认本机 Chrome）| bitbrowser（比特浏览器 Local API）
+    # browser_backend: chromium（默认本机 Chrome）| bitbrowser（比特浏览器 Local API）| adspower（AdsPower Local API，免费版可用）
     "browser_backend": "chromium",
     "bitbrowser_api": "http://127.0.0.1:54345",
     "bitbrowser_browser_id": "",
@@ -52,6 +52,18 @@ DEFAULT_CONFIG = {
     "bitbrowser_sync_proxy": False,
     "bitbrowser_timeout": 60,
     "bitbrowser_args": [],
+    # adspower backend: 走 AdsPower Local API，免费版严格 QPS<=1，建议使用固定环境池
+    "adspower_api": "http://local.adspower.net:50325",
+    "adspower_api_key": "",
+    "adspower_user_id": "",
+    "adspower_user_ids": [],
+    "adspower_name": "",
+    "adspower_load_turnstile_patch": True,
+    "adspower_headless": False,
+    "adspower_launch_args": [],
+    "adspower_open_tabs": 0,
+    "adspower_rate_limit_sec": 1.05,
+    "adspower_timeout": 60,
     # fingerprint backend: self-hosted fingerprint (no BitBrowser needed)
     "fingerprint_profile_root": "",
     "fingerprint_delete_on_release": True,
@@ -952,13 +964,15 @@ def browser_backend_name() -> str:
     raw = str((config or {}).get("browser_backend") or "chromium").strip().lower()
     if raw in {"bitbrowser", "bit", "bb", "比特", "比特浏览器"}:
         return "bitbrowser"
+    if raw in {"adspower", "ads", "adsp", "ads-power", "ads_power"}:
+        return "adspower"
     if raw in {"fingerprint", "fp", "指纹", "指纹浏览器", "fpbrowser"}:
         return "fingerprint"
     return "chromium"
 
 
 def create_managed_browser(log_callback=None):
-    """Create a browser for TabPool: local Chromium / BitBrowser / fingerprint."""
+    """Create a browser for TabPool: local Chromium / BitBrowser / AdsPower / fingerprint."""
     backend = browser_backend_name()
     if backend == "bitbrowser":
         from bitbrowser import open_and_attach
@@ -972,6 +986,20 @@ def create_managed_browser(log_callback=None):
                 print(msg)
 
         browser, _meta = open_and_attach(config, extension_path=ext, log=_log)
+        return browser
+
+    if backend == "adspower":
+        from adspower import open_and_attach as adspower_open
+
+        ext = EXTENSION_PATH if os.path.exists(EXTENSION_PATH) else None
+
+        def _log(msg):
+            if log_callback:
+                log_callback(msg)
+            else:
+                print(msg)
+
+        browser, _meta = adspower_open(config, extension_path=ext, log=_log)
         return browser
 
     if backend == "fingerprint":

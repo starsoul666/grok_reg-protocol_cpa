@@ -102,10 +102,13 @@ grok_reg-protocol_cpa/
 |------|------|
 | `email_provider` | 邮箱类型：`hotmail`、`cloudmail`、`cloudflare` 等 |
 | `hotmail_accounts_file` | Hotmail 凭证文件路径 |
-| `browser_backend` | `chromium`（默认）或 `bitbrowser` |
+| `browser_backend` | `chromium`（默认）、`bitbrowser` 或 `adspower` |
 | `bitbrowser_api` | 比特浏览器 Local API，默认 `http://127.0.0.1:54345` |
 | `bitbrowser_browser_id` / `bitbrowser_browser_ids` | 固定窗口 id / 窗口池 |
 | `bitbrowser_name` | 按名称查找窗口；可配合 `bitbrowser_auto_create` |
+| `adspower_api` | AdsPower Local API，默认 `http://local.adspower.net:50325`（免费版可用） |
+| `adspower_user_id` / `adspower_user_ids` | AdsPower 固定环境 id / 环境池；免费版无 auto_create，池数=并发上限 |
+| `adspower_rate_limit_sec` | AdsPower 免费版 QPS≤1，客户端进程级节流下限（默认 1.05） |
 | `cpa_export_enabled` | 是否启用 CPA 导出（默认 `true`） |
 | `cpa_prefer_protocol` | 是否优先协议 mint（默认 `true`） |
 | `cpa_protocol_flow` | 协议 mint 流程：`pkce`（默认推荐）或 `device`（旧 Device Flow） |

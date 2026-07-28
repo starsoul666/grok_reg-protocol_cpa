@@ -125,6 +125,17 @@ class TabPool:
                 except Exception:
                     pass
             return
+        if getattr(browser, "_adspower_id", None) or getattr(browser, "_adspower_meta", None):
+            try:
+                from adspower import release_attached as adspower_release
+
+                adspower_release(browser, log=log_callback)
+            except Exception:
+                try:
+                    browser.quit()
+                except Exception:
+                    pass
+            return
         if getattr(browser, "_fingerprint", None):
             try:
                 from fingerprint import release_fingerprint_browser
